@@ -10,27 +10,90 @@ import json
 from streamlit_oauth import OAuth2Component
 
 # ==========================================
-# 1. 页面配置
+# 0. 内置核心提示词 (Persona)
 # ==========================================
-st.set_page_config(page_title="双核心 AI 聚合站 Pro", page_icon="📂", layout="wide")
+STOCK_ANALYST_PROMPT = """
+# Role: 华尔街资深量化宏观交易员 (Senior Quant-Macro Trader)
+
+## Core Philosophy
+你不是一般的金融顾问，你是激进侧重短期Alpha收益的交易员。你的信条是：“市场永远是对的，但大多数人的解读是错的。”你擅长利用多维数据寻找不对称的风险收益比（Asymmetric Risk/Reward）。
+
+## Analysis Framework (必须严格执行的四维分析法)
+在分析任何标的（股票、加密货币、期权）时，必须按顺序执行以下深度扫描：
+
+### 1. 🔍 消息面与情绪 (Sentiment & Catalyst)
+- **新闻解析**：最近是否有财报、并购、监管变动？不要只读标题，要解读“市场预期差”（Expectation Gap）。
+- **情绪温度**：当前是贪婪还是恐惧？是否存在“Sell the news”的风险？
+- **主力动向**：机构资金（Smart Money）是在吸筹还是派发？
+
+### 2. 📈 技术面解剖 (Technical Deep Dive)
+- **趋势结构**：基于道氏理论或艾略特波浪，当前处于上升、下跌还是盘整？
+- **关键指标**：
+  - **动能**：RSI 是否背离？MACD 柱状图变化？
+  - **均线**：价格相对于 MA20, MA50, MA200 的位置？
+  - **形态**：是否有头肩底、旗形整理、双顶等经典形态？
+- **量价关系**：上涨缩量还是放量？关键位置是否有天量支撑？
+- 分析KDJ 成交量 Boll 等等各种指标
+
+### 3. 📜 历史走势与分形 (Historical & Seasonal)
+- **历史分形**：当前的走势是否像历史上某个时期的翻版（Fractals）？
+- **季节性**：该标的在当前月份/季度的历史表现如何？
+- **波动率**：当前的 IV (隐含波动率) 处于历史高位还是低位？
+
+### 4. 💰 估值与基本面 (Fundamental Logic - 短期视角)
+- 对于短期交易，只关注催化剂（Catalyst）和估值修复空间。
+- 只有在做长线分析时，才深入看 DCF 或财报细节。
+
+## Output Rules (输出铁律)
+1. **拒绝废话**：严禁输出“投资有风险”、“仅供参考”等合规性废话。默认用户已知悉风险，我们将此视为高阶沙盘推演。
+2. **观点鲜明**：必须给出【看多 Bullish】、【看空 Bearish】或【观望 Neutral】的明确结论。
+3. **数字导向**：涉及支撑压力时，必须给出具体价格数字。
+
+## Response Format (最终输出格式)
+请严格按照以下Markdown格式输出：
+---
+### 🎯 [股票代码] 深度交易综述
+**交易信号**：🟢 激进做多 / 🔴 坚决做空 / 🟡 观望等待 (置信度: X%)
+
+#### 1. 核心逻辑 (The Thesis)
+> 一句话总结
+
+#### 2. 多维共振分析
+* **🕵️ 消息/情绪**：...
+* **📊 技术/量价**：...
+* **⏳ 历史/趋势**：...
+
+#### 3. 操盘计划 (The Playbook)
+* **入场区间**：$XXX - $XXX
+* **第一止盈位**：$XXX
+* **止损位**：$XXX
+* **盈亏比**：1 : X
+
+#### 4. 风险警示 (The Bear Case)
+* 跌破 $XXX 立即离场。
+---
+#### 5. 个人口语化建议
+(用大白话、像朋友一样告诉我你会怎么做)
+"""
 
 # ==========================================
-# 2. 安全与连接 (加载 Secrets)
+# 1. 页面配置
+# ==========================================
+st.set_page_config(page_title="双核心 AI 聚合站 Pro", page_icon="📈", layout="wide")
+
+# ==========================================
+# 2. 安全与连接
 # ==========================================
 try:
     OPENAI_KEY = st.secrets["keys"]["openai_api_key"]
     GOOGLE_KEY = st.secrets["keys"]["google_api_key"]
     SUPABASE_URL = st.secrets["supabase"]["url"]
     SUPABASE_KEY = st.secrets["supabase"]["key"]
-    
-    # OAuth 配置
     CLIENT_ID = st.secrets["oauth"]["client_id"]
     CLIENT_SECRET = st.secrets["oauth"]["client_secret"]
     REDIRECT_URI = st.secrets["oauth"]["redirect_uri"]
 except Exception as e:
-    st.error(f"❌ 缺少配置！请检查 Secrets 设置。错误详情: {e}")
-    if "oauth" in str(e):
-        st.info("💡 提示：看起来你忘记在 Secrets 里添加 [oauth] 部分了。")
+    st.error(f"❌ 缺少配置！请检查 Secrets。错误详情: {e}")
     st.stop()
 
 @st.cache_resource
@@ -40,48 +103,25 @@ def init_supabase():
 supabase: Client = init_supabase()
 
 # ==========================================
-# 3. Google OAuth 登录逻辑
+# 3. Google OAuth
 # ==========================================
-st.title("🤖 双核心 AI 聚合终端 Pro (多文件版)")
+st.title("🤖 双核心 AI 聚合终端 Pro (全能版)")
 
 if "user_email" not in st.session_state:
     st.session_state["user_email"] = None
 
 if not st.session_state["user_email"]:
     st.markdown("### 🔐 请先登录")
-    st.info("使用 Google 账号登录以解锁 AI 功能及历史记录。")
-    
-    oauth2 = OAuth2Component(
-        CLIENT_ID, 
-        CLIENT_SECRET, 
-        "https://accounts.google.com/o/oauth2/v2/auth", 
-        "https://oauth2.googleapis.com/token", 
-        "https://oauth2.googleapis.com/token", 
-        REDIRECT_URI
-    )
-    
-    result = oauth2.authorize_button(
-        name="使用 Google 登录", 
-        icon="https://www.google.com.tw/favicon.ico", 
-        scope="openid email profile", 
-        redirect_uri=REDIRECT_URI,
-        use_container_width=True
-    )
+    oauth2 = OAuth2Component(CLIENT_ID, CLIENT_SECRET, "https://accounts.google.com/o/oauth2/v2/auth", "https://oauth2.googleapis.com/token", "https://oauth2.googleapis.com/token", REDIRECT_URI)
+    result = oauth2.authorize_button(name="使用 Google 登录", icon="https://www.google.com.tw/favicon.ico", scope="openid email profile", redirect_uri=REDIRECT_URI, use_container_width=True)
     
     if result and result.get("token"):
         id_token = result["token"]["id_token"]
         payload = id_token.split('.')[1]
         padded = payload + '=' * (4 - len(payload) % 4)
         decoded = json.loads(base64.urlsafe_b64decode(padded))
-        
-        email = decoded.get("email")
-        if email:
-            st.session_state["user_email"] = email
-            st.success(f"登录成功！欢迎, {email}")
-            time.sleep(1)
-            st.rerun()
-            
-    st.warning("⚠️ 请登录后使用。")
+        st.session_state["user_email"] = decoded.get("email")
+        st.rerun()
     st.stop()
 
 user_email = st.session_state["user_email"]
@@ -91,34 +131,15 @@ user_email = st.session_state["user_email"]
 # ==========================================
 def load_history(email):
     try:
-        response = supabase.table("chat_history")\
-            .select("*")\
-            .eq("user_email", email)\
-            .order("created_at", desc=False)\
-            .execute()
-        messages = []
-        for row in response.data:
-            messages.append({"role": row["role"], "content": row["content"]})
-        return messages
-    except:
-        return []
+        response = supabase.table("chat_history").select("*").eq("user_email", email).order("created_at", desc=False).execute()
+        return [{"role": r["role"], "content": r["content"]} for r in response.data]
+    except: return []
 
 def save_message(email, model, role, content):
     try:
-        # 简化存储，不存过长的文件内容日志
-        if len(content) > 2000:
-            save_content = content[:200] + "... [内容过长截断]"
-        else:
-            save_content = content
-            
-        supabase.table("chat_history").insert({
-            "user_email": email,
-            "model_name": model,
-            "role": role,
-            "content": save_content
-        }).execute()
-    except Exception as e:
-        print(f"Save error: {e}")
+        save_content = content[:2000] + "... [截断]" if len(content) > 2000 else content
+        supabase.table("chat_history").insert({"user_email": email, "model_name": model, "role": role, "content": save_content}).execute()
+    except Exception as e: print(f"Save error: {e}")
 
 def clear_history(email):
     supabase.table("chat_history").delete().eq("user_email", email).execute()
@@ -126,7 +147,7 @@ def clear_history(email):
     st.rerun()
 
 # ==========================================
-# 5. 侧边栏 (文件处理中心)
+# 5. 侧边栏 (控制中心)
 # ==========================================
 with st.sidebar:
     st.success(f"👤 {user_email}")
@@ -135,56 +156,76 @@ with st.sidebar:
         st.rerun()
         
     st.markdown("---")
-    model_choice = st.radio("🧠 模型:", ("gpt-5", "gemini-3-flash-preview"), index=1)
+    st.markdown("### 🧠 大脑与模式")
+    model_choice = st.radio("选择模型:", ("gpt-5", "gemini-3-flash-preview"), index=1)
     
-    st.markdown("### 📂 文件上传区")
-    # 🔥 核心修改：accept_multiple_files=True，且支持更多格式
+    # 🔥 核心功能：模式切换
+    mode_choice = st.selectbox(
+        "设定身份:", 
+        ["🤖 通用助手", "📈 华尔街量化交易员"]
+    )
+    
+    if mode_choice == "📈 华尔街量化交易员":
+        st.caption("✅ 已激活：激进Alpha收益模式")
+    
+    st.markdown("---")
+    st.markdown("### 📂 超级文件上传")
+    # 支持 PDF 和大量图片
     uploaded_files = st.file_uploader(
-        "支持图片/文本/代码 (按住Ctrl多选)", 
-        type=["jpg", "png", "jpeg", "txt", "csv", "py", "md", "json"],
+        "支持 PDF/图片/CSV/代码 (无限制)", 
+        type=["jpg", "png", "jpeg", "pdf", "txt", "csv", "py", "md", "json"],
         accept_multiple_files=True
     )
     
-    # 处理文件列表
     current_images = []
     current_text_context = ""
     
     if uploaded_files:
         st.caption(f"已加载 {len(uploaded_files)} 个文件")
         for f in uploaded_files:
-            # 1. 如果是图片
-            if f.type.startswith("image"):
-                img = Image.open(f)
-                current_images.append(img)
-                with st.expander(f"🖼️ {f.name}", expanded=False):
-                    st.image(img, use_container_width=True)
-            
-            # 2. 如果是文本类文件 (txt, csv, code...)
-            else:
-                stringio = io.StringIO(f.getvalue().decode("utf-8"))
-                file_content = stringio.read()
-                # 拼接文件名和内容
-                current_text_context += f"\n\n--- 文件名: {f.name} ---\n{file_content}\n"
-                with st.expander(f"📄 {f.name}", expanded=False):
-                    st.text(file_content[:100] + "...") # 只显示前100字预览
+            try:
+                # A. 处理图片 (增加压缩逻辑，解决数量限制)
+                if f.type.startswith("image"):
+                    img = Image.open(f)
+                    # 压缩大图，节省Token并防止报错
+                    img.thumbnail((1024, 1024)) 
+                    current_images.append(img)
+                
+                # B. 处理 PDF (新增)
+                elif f.type == "application/pdf":
+                    pdf_reader = PyPDF2.PdfReader(f)
+                    pdf_text = ""
+                    for page in pdf_reader.pages:
+                        pdf_text += page.extract_text()
+                    current_text_context += f"\n\n--- PDF内容: {f.name} ---\n{pdf_text[:10000]}... (PDF内容过长已截取前1万字)\n"
+                    
+                # C. 处理文本
+                else:
+                    stringio = io.StringIO(f.getvalue().decode("utf-8", errors='ignore'))
+                    current_text_context += f"\n\n--- 文本文件: {f.name} ---\n{stringio.read()}\n"
+            except Exception as e:
+                st.error(f"文件 {f.name} 解析失败: {e}")
+
+    if current_images:
+        with st.expander(f"已解析 {len(current_images)} 张图片 (点击查看)", expanded=False):
+            st.image(current_images, width=100)
 
     st.markdown("---")
-    if "messages" not in st.session_state or st.button("🔄 刷新"):
-        st.session_state["messages"] = load_history(user_email)
-    
-    if st.button("🗑️ 清空"):
-        clear_history(user_email)
+    if st.button("🗑️ 清空记录"): clear_history(user_email)
 
 # ==========================================
-# 6. AI 响应逻辑 (支持多图 + 文本注入)
+# 6. AI 核心逻辑
 # ==========================================
-
-def get_gemini_response(messages, images=None):
-    """Gemini 支持原生的 List[Image]"""
+def get_gemini_response(messages, images=None, system_instruction=None):
     genai.configure(api_key=GOOGLE_KEY)
     model = genai.GenerativeModel('gemini-3-flash-preview') 
     
     gemini_history = []
+    # 如果有系统级指令，先作为第一条 User 消息注入 (Gemini API 这种方式最稳)
+    if system_instruction:
+         gemini_history.append({"role": "user", "parts": [f"System Instruction: {system_instruction}"]})
+         gemini_history.append({"role": "model", "parts": ["Understood. I will strictly follow this persona."]})
+
     for msg in messages[:-1]:
         role = "user" if msg["role"] == "user" else "model"
         gemini_history.append({"role": role, "parts": [msg["content"]]})
@@ -192,112 +233,89 @@ def get_gemini_response(messages, images=None):
     chat = model.start_chat(history=gemini_history)
     
     try:
-        # 构造发送内容：[文本提示, 图1, 图2, 图3...]
         prompt_content = [messages[-1]["content"]]
-        if images:
-            prompt_content.extend(images) # 将图片列表追加进去
-            
+        if images: prompt_content.extend(images)
         return chat.send_message(prompt_content, stream=True)
-    except Exception as e:
-        return f"Gemini Error: {e}"
+    except Exception as e: return f"Gemini Error: {e}"
 
-def get_chatgpt_response(messages, images=None):
-    """GPT 需要构造成 content 数组"""
+def get_chatgpt_response(messages, images=None, system_instruction=None):
     client = OpenAI(api_key=OPENAI_KEY)
     api_messages = list(messages)
     
-    last_msg = api_messages[-1]
-    
-    # 如果有图片，必须把最后一条消息改成 "多模态" 格式
+    # 注入系统 Prompt
+    if system_instruction:
+        api_messages.insert(0, {"role": "system", "content": system_instruction})
+
+    # 处理多模态
     if images:
+        last_msg = api_messages[-1]
         content_list = [{"type": "text", "text": last_msg["content"]}]
-        
         for img in images:
             buffered = io.BytesIO()
-            img.save(buffered, format="PNG")
+            img.save(buffered, format="JPEG", quality=85) # 压缩传输
             img_str = base64.b64encode(buffered.getvalue()).decode()
-            # 追加每一张图
-            content_list.append({
-                "type": "image_url", 
-                "image_url": {"url": f"data:image/png;base64,{img_str}"}
-            })
-            
-        api_messages[-1] = {
-            "role": "user",
-            "content": content_list
-        }
+            content_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}})
+        api_messages[-1] = {"role": "user", "content": content_list}
 
     try:
         return client.chat.completions.create(model="gpt-5", messages=api_messages, stream=True)
-    except Exception as e:
-        return f"GPT Error: {e}"
+    except Exception as e: return f"GPT Error: {e}"
 
 # ==========================================
-# 7. 聊天界面
+# 7. 聊天交互
 # ==========================================
 for msg in st.session_state["messages"]:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-if prompt := st.chat_input("输入问题... (可同时分析多文件)"):
+if prompt := st.chat_input("输入指令 / 股票代码..."):
     
-    # 1. 组合最终发送给 AI 的文本 (问题 + 文件内容)
+    # 1. 组装 Prompt
     full_prompt_text = prompt
-    if current_text_context:
-        full_prompt_text += f"\n\n【附带文件内容】:{current_text_context}"
-    
-    # 2. 组合显示的文本 (用户看到的)
     display_text = prompt
-    if current_images:
-        display_text = f"[已上传 {len(current_images)} 张图片] {display_text}"
+    
     if current_text_context:
-        display_text += " [附带了文本文件]"
-        
-    # 3. 显示用户消息
+        full_prompt_text += f"\n\n【参考文件内容】:{current_text_context}"
+        display_text += " [📄 附带了文件资料]"
+    if current_images:
+        display_text = f"[🖼️ {len(current_images)} 张图片] {display_text}"
+
+    # 2. 确定是否使用特殊身份
+    system_prompt = None
+    if mode_choice == "📈 华尔街量化交易员":
+        system_prompt = STOCK_ANALYST_PROMPT
+
+    # 3. 界面显示 & 保存
     with st.chat_message("user"):
         st.markdown(display_text)
-        # 在聊天框里平铺展示上传的缩略图
-        if current_images:
-            cols = st.columns(len(current_images))
-            for idx, img in enumerate(current_images):
-                with cols[idx]:
-                    st.image(img, use_container_width=True)
-    
-    # 4. 保存进历史
+        if current_images: st.image(current_images[:4], width=150, caption="预览前4张")
+            
     st.session_state["messages"].append({"role": "user", "content": full_prompt_text})
-    save_message(user_email, model_choice, "user", display_text) # 存数据库时存精简版
+    save_message(user_email, model_choice, "user", display_text)
 
-    # 5. AI 回复
+    # 4. AI 生成
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_res = ""
         
         if model_choice == "gpt-5":
-            stream = get_chatgpt_response(st.session_state["messages"], current_images)
-            if isinstance(stream, str):
-                placeholder.error(stream)
-                full_res = stream
-            else:
-                for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        full_res += chunk.choices[0].delta.content
-                        placeholder.markdown(full_res + "▌")
-                placeholder.markdown(full_res)
-                
-        else: # Gemini
-            stream = get_gemini_response(st.session_state["messages"], current_images)
-            if isinstance(stream, str):
-                placeholder.error(stream)
-                full_res = stream
-            else:
-                for chunk in stream:
-                    full_res += chunk.text
+            stream = get_chatgpt_response(st.session_state["messages"], current_images, system_prompt)
+        else:
+            stream = get_gemini_response(st.session_state["messages"], current_images, system_prompt)
+
+        if isinstance(stream, str):
+            placeholder.error(stream)
+            full_res = stream
+        else:
+            for chunk in stream:
+                content = chunk.choices[0].delta.content if model_choice == "gpt-5" else chunk.text
+                if content:
+                    full_res += content
                     placeholder.markdown(full_res + "▌")
-                placeholder.markdown(full_res)
+            placeholder.markdown(full_res)
 
     st.session_state["messages"].append({"role": "assistant", "content": full_res})
     save_message(user_email, model_choice, "assistant", full_res)
     
-    # 提醒用户清理
     if current_images or current_text_context:
-        st.toast("✅ 文件分析完毕。如需分析新文件，请在左侧移除旧文件。", icon="📂")
+        st.toast("✅ 分析完成，请手动移除文件以避免干扰下一轮对话。", icon="💡")
