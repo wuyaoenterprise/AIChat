@@ -7,74 +7,96 @@ import io
 import base64
 import time
 import json
-# 👇【修正1】这里之前多写了'it'，已修正
 from streamlit_oauth import OAuth2Component
 import PyPDF2
+# 👇【新增】引入 yfinance 用于抓取实时数据
+import yfinance as yf
 
 # ==========================================
-# 0. 内置核心提示词 (Persona)
+# 0. 内置核心提示词 (Persona) - 已升级为"深度详细版"
 # ==========================================
 STOCK_ANALYST_PROMPT = """
 # Role: 华尔街资深量化宏观交易员 (Senior Quant-Macro Trader)
 
 ## Core Philosophy
-你不是一般的金融顾问，你是激进侧重短期Alpha收益的交易员。你的信条是：“市场永远是对的，但大多数人的解读是错的。”你擅长利用多维数据寻找不对称的风险收益比（Asymmetric Risk/Reward）。
+你不是一般的机器人，你是拥有20年经验的顶级操盘手。你的风格是**深度、详尽、逻辑缜密**。你不仅给出结论，更看重**逻辑推演的过程**。你拒绝短得像推特一样的回答，你喜欢像写“投资备忘录”一样，把事情的前因后果、市场博弈、宏观背景全部讲清楚。
 
-## Analysis Framework (必须严格执行的四维分析法)
-在分析任何标的（股票、加密货币、期权）时，必须按顺序执行以下深度扫描：
+## Analysis Framework (深度扫描)
+在分析时，请务必覆盖以下维度，并尽可能详细地展开：
 
-### 1. 🔍 消息面与情绪 (Sentiment & Catalyst)
-- **新闻解析**：最近是否有财报、并购、监管变动？要解读“市场预期差”。
-- **情绪温度**：当前是贪婪还是恐惧？是否存在“Sell the news”的风险？
-- **主力动向**：机构资金（Smart Money）是在吸筹还是派发？
+### 1. 🕵️ 宏观与消息面 (The Narrative)
+- **不要只读新闻标题**：结合宏观经济（美联储政策、通胀、地缘政治）来解读个股新闻。
+- **博弈分析**：市场现在的预期是什么？这个消息是否已经被Price-in（计价）了？是否存在预期差？
+- **机构动向**：Smart Money 在做什么？期权链上的大单在赌什么方向？
 
-### 2. 📈 技术面解剖 (Technical Deep Dive)
-- **趋势结构**：基于道氏理论或艾略特波浪，当前处于上升、下跌还是盘整？
-- **关键指标**：
-  - **动能**：RSI 是否背离？MACD 柱状图变化？
-  - **均线**：价格相对于 MA20, MA50, MA200 的位置？
-  - **形态**：是否有头肩底、旗形整理、双顶等经典形态？
-- **量价关系**：上涨缩量还是放量？关键位置是否有天量支撑？
+### 2. 📈 技术面深度解剖 (Technical Deep Dive)
+- **结构与趋势**：从周线看大趋势，从日线看波段。是多头排列还是空头陷阱？
+- **量价行为 (Price Action)**：关键位置的成交量如何？有没有原本的支撑变成了压力？
+- **指标共振**：RSI、MACD、布林带是否在同一时间指出了同一方向？
 
-### 3. 📜 历史走势与分形 (Historical & Seasonal)
-- **历史分形**：当前的走势是否像历史上某个时期的翻版？
-- **季节性**：该标的在当前月份/季度的历史表现如何？
-- **波动率**：当前的 IV (隐含波动率) 处于历史高位还是低位？
+### 3. 📜 历史分形与统计 (Historical Context)
+- 这只股票在财报季通常怎么走？
+- 当前的走势是否像历史上某一次崩盘或暴涨的前夜？
 
-### 4. 💰 估值与基本面 (Fundamental Logic - 短期视角)
-- 对于短期交易，只关注催化剂（Catalyst）和估值修复空间。
+## Output Style (输出风格要求)
+1. **像真人一样交谈**：可以使用专业的行话（Alpha, Gamma Squeeze, IV Crush），但要像个导师一样把逻辑讲透。
+2. **拒绝简短**：**越详细越好**。不要只列点，要写段落。把每一个分析点的“为什么”讲清楚。
+3. **包含具体数据**：提到支撑位、压力位时，必须给出具体价格。
 
-## Output Rules (输出铁律)
-1. **拒绝废话**：严禁输出“投资有风险”等合规性废话。
-2. **观点鲜明**：必须给出【看多 Bullish】、【看空 Bearish】或【观望 Neutral】的明确结论。
-3. **数字导向**：涉及支撑压力时，必须给出具体价格数字。
-
-## Response Format (最终输出格式)
-请严格按照以下Markdown格式输出：
----
-### 🎯 [股票代码] 深度交易综述
-**交易信号**：🟢 激进做多 / 🔴 坚决做空 / 🟡 观望等待 (置信度: X%)
-
-#### 1. 核心逻辑
-> 一句话总结
-
-#### 2. 多维共振分析
-* **🕵️ 消息/情绪**：...
-* **📊 技术/量价**：...
-* **⏳ 历史/趋势**：...
-
-#### 3. 操盘计划
-* **入场区间**：$XXX - $XXX
-* **第一止盈位**：$XXX
-* **止损位**：$XXX
-* **盈亏比**：1 : X
-
-#### 4. 风险警示
-* 跌破 $XXX 立即离场。
----
-#### 5. 个人口语化建议
-(用大白话、像朋友一样告诉我你会怎么做)
+## Response Structure (建议回复结构)
+虽然你可以自由发挥，但请确保包含：
+- **🎯 核心交易观点** (一针见血的结论)
+- **🧐 深度逻辑推演** (这里要长篇大论，把多空逻辑都分析透)
+- **📊 关键点位与计划** (具体的入场、止损、止盈数字)
+- **💡 像朋友一样的建议** (如果这是你自己的钱，你会怎么操作？)
 """
+
+# ==========================================
+# 0.5 工具函数：抓取股票数据
+# ==========================================
+def get_stock_info(symbol):
+    try:
+        # 移除可能的多余空格
+        symbol = symbol.strip().upper()
+        ticker = yf.Ticker(symbol)
+        
+        # 1. 获取盘中实时/收盘数据 (最近1天, 5分钟级)
+        history = ticker.history(period="1d", interval="5m")
+        
+        # 2. 获取基本信息 (可能包含市盈率、市值等)
+        info = ticker.info
+        
+        if not history.empty:
+            latest = history.iloc[-1]
+            # 格式化数据字符串
+            price_data = f"""
+            【{symbol} 实时交易数据快照】
+            - 当前价格: {latest['Close']:.2f}
+            - 今日开盘: {latest['Open']:.2f}
+            - 今日最高: {latest['High']:.2f}
+            - 今日最低: {latest['Low']:.2f}
+            - 成交量: {latest['Volume']}
+            - 市值: {info.get('marketCap', 'N/A')}
+            - 盘中走势(最近5个5分钟K线):
+            {history.tail(5)[['Open', 'High', 'Low', 'Close', 'Volume']].to_string()}
+            """
+        else:
+            price_data = f"【{symbol}】未获取到盘中K线数据 (可能是休市或代码错误)。"
+
+        # 3. 获取最新新闻
+        news = ticker.news
+        news_str = "\n\n【最新关联新闻】:\n"
+        if news:
+            for n in news[:3]: # 只取最新的3条
+                pub_time = time.strftime('%Y-%m-%d %H:%M', time.localtime(n.get('providerPublishTime', 0)))
+                news_str += f"- [{pub_time}] {n.get('title')} (来源: {n.get('publisher')})\n"
+        else:
+            news_str += "暂无最新即时新闻。"
+            
+        return price_data + news_str
+
+    except Exception as e:
+        return f"尝试抓取 {symbol} 数据时发生错误: {str(e)}"
 
 # ==========================================
 # 1. 页面配置
@@ -89,7 +111,6 @@ try:
     GOOGLE_KEY = st.secrets["keys"]["google_api_key"]
     SUPABASE_URL = st.secrets["supabase"]["url"]
     SUPABASE_KEY = st.secrets["supabase"]["key"]
-    # 👇【修正2】如果不加这段，就会报 Screenshot 2 的错
     CLIENT_ID = st.secrets["oauth"]["client_id"]
     CLIENT_SECRET = st.secrets["oauth"]["client_secret"]
     REDIRECT_URI = st.secrets["oauth"]["redirect_uri"]
@@ -150,10 +171,9 @@ def clear_history(email):
     st.rerun()
   
 # ==========================================
-# 4.5 初始化消息列表 (新增修复代码)
+# 4.5 初始化消息列表
 # ==========================================
 if "messages" not in st.session_state:
-    # 尝试从数据库加载历史，如果没有则初始化为空列表
     if st.session_state.get("user_email"):
         st.session_state["messages"] = load_history(st.session_state["user_email"])
     else:
@@ -182,8 +202,16 @@ with st.sidebar:
         st.caption("✅ 交易员模式已激活")
     
     st.markdown("---")
+    # 👇【新增】侧边栏手动抓取工具
+    st.markdown("### 📡 快速行情抓取")
+    manual_ticker = st.text_input("输入代码 (如 TSLA):", key="sidebar_ticker").upper()
+    if manual_ticker and st.button("🔍 抓取数据并分析"):
+        # 将数据抓取指令直接注入到聊天框
+        st.session_state["auto_prompt"] = manual_ticker
+        # 注意：这里不直接 reruen，而是通过 session_state 传递给主逻辑
+    
+    st.markdown("---")
     st.markdown("### 📂 超级文件上传")
-    # 这里 accept_multiple_files=True 允许你按住 Ctrl 选多张
     uploaded_files = st.file_uploader(
         "支持 PDF/图片/CSV/代码", 
         type=["jpg", "png", "jpeg", "pdf", "txt", "csv", "py", "md", "json"],
@@ -200,7 +228,6 @@ with st.sidebar:
                 # A. 图片处理
                 if f.type.startswith("image"):
                     img = Image.open(f)
-                    # 压缩大图，防止 API 报错
                     img.thumbnail((1024, 1024)) 
                     current_images.append(img)
                 
@@ -219,8 +246,6 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"文件 {f.name} 解析失败: {e}")
 
-    # 👇【修正3】修复 Screenshot 3 的错误
-    # 去掉了 caption 参数，彻底解决"Cannot pair captions"的报错
     if current_images:
         with st.expander(f"已解析 {len(current_images)} 张图片 (点击查看)", expanded=False):
             st.image(current_images[:4], width=150) 
@@ -238,10 +263,9 @@ def get_gemini_response(messages, images=None, system_instruction=None):
     model = genai.GenerativeModel('gemini-3-flash-preview') 
     
     gemini_history = []
-    # 如果有系统指令，注入到对话开头
     if system_instruction:
          gemini_history.append({"role": "user", "parts": [f"System Instruction: {system_instruction}"]})
-         gemini_history.append({"role": "model", "parts": ["Understood."]})
+         gemini_history.append({"role": "model", "parts": ["Understood. I will provide detailed, expert analysis."]})
 
     for msg in messages[:-1]:
         role = "user" if msg["role"] == "user" else "model"
@@ -259,7 +283,6 @@ def get_chatgpt_response(messages, images=None, system_instruction=None):
     client = OpenAI(api_key=OPENAI_KEY)
     api_messages = list(messages)
     
-    # 注入 System Instruction
     if system_instruction:
         api_messages.insert(0, {"role": "system", "content": system_instruction})
 
@@ -269,8 +292,7 @@ def get_chatgpt_response(messages, images=None, system_instruction=None):
         content_list = [{"type": "text", "text": last_msg["content"]}]
         
         for img in images:
-            # 👇【核心修复】处理透明通道问题
-            # 如果图片是 RGBA (带透明) 或 P 模式，强制转为 RGB (白色背景)
+            # ✅ 修复 PNG 透明背景报错
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
                 
@@ -282,32 +304,50 @@ def get_chatgpt_response(messages, images=None, system_instruction=None):
         api_messages[-1] = {"role": "user", "content": content_list}
 
     try:
-        # 注意：这里模型名称如果你没有 gpt-5 权限，建议改为 gpt-4o
         return client.chat.completions.create(model="gpt-5", messages=api_messages, stream=True)
     except Exception as e: return f"GPT Error: {e}"
 
 # ==========================================
 # 7. 聊天交互
 # ==========================================
-# 显示历史消息
 for msg in st.session_state["messages"]:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# 处理用户输入
-if prompt := st.chat_input("输入指令 / 股票代码..."):
-    
+# 检查是否有来自侧边栏的自动输入
+if "auto_prompt" in st.session_state and st.session_state["auto_prompt"]:
+    user_input = st.session_state["auto_prompt"]
+    # 清空状态防止循环
+    del st.session_state["auto_prompt"]
+    # 模拟用户提交
+    prompt = user_input
+else:
+    prompt = st.chat_input("输入指令 / 股票代码 (如 NVDA)...")
+
+if prompt:
     full_prompt_text = prompt
     display_text = prompt
     
-    # 拼接上下文文件
+    # 👇【新增】智能识别股票代码并抓取数据
+    # 如果输入比较短且是纯字母，大概率是股票代码
+    potential_ticker = prompt.strip().upper()
+    # 简单的判断逻辑：长度小于6且全是字母，或者包含 . (如 HK 股)
+    is_ticker = (len(potential_ticker) <= 6 and potential_ticker.isalpha()) or ("." in potential_ticker and len(potential_ticker) <= 10)
+    
+    if is_ticker:
+        with st.status(f"📡 正在抓取 {potential_ticker} 实时行情...", expanded=True) as status:
+            stock_data = get_stock_info(potential_ticker)
+            full_prompt_text += f"\n\n【系统自动抓取的实时行情】:\n{stock_data}"
+            display_text += f" [📡 已自动挂载 {potential_ticker} 实时数据]"
+            status.update(label="✅ 数据抓取完成", state="complete", expanded=False)
+
+    # 拼接文件上下文
     if current_text_context:
         full_prompt_text += f"\n\n【参考文件内容】:{current_text_context}"
         display_text += " [📄 附带了文件资料]"
     if current_images:
         display_text = f"[🖼️ {len(current_images)} 张图片] {display_text}"
 
-    # 确定系统提示词
     system_prompt = STOCK_ANALYST_PROMPT if mode_choice == "📈 华尔街量化交易员" else None
 
     # 1. 显示用户消息
@@ -316,16 +356,16 @@ if prompt := st.chat_input("输入指令 / 股票代码..."):
         if current_images: 
             st.image(current_images[:4], width=150)
             
-    # 2. 保存用户消息到历史
+    # 2. 保存用户消息
     st.session_state["messages"].append({"role": "user", "content": full_prompt_text})
     save_message(user_email, model_choice, "user", display_text)
 
-    # 3. 生成 AI 回复 (这里是你之前漏掉的核心部分！)
+    # 3. 生成 AI 回复
     with st.chat_message("assistant"):
-        placeholder = st.empty() # 创建占位符
+        placeholder = st.empty()
         full_res = ""
         
-        # 调用 AI 接口获取流式响应
+        # 调用 AI
         if model_choice == "gpt-5":
             stream = get_chatgpt_response(
                 st.session_state["messages"], 
@@ -339,42 +379,36 @@ if prompt := st.chat_input("输入指令 / 股票代码..."):
                 system_instruction=system_prompt
             )
 
-        # 4. 处理流式输出
+        # 4. 流式输出处理
         if isinstance(stream, str):
-            # 如果 stream 是字符串，说明出错了（返回了错误信息）
             placeholder.error(stream)
             full_res = stream
         else:
             try:
                 for chunk in stream:
-                    # 兼容 GPT 和 Gemini 的差异
                     if model_choice == "gpt-5":
                         content = chunk.choices[0].delta.content
                     else:
-                        # Gemini 如果触发安全拦截，访问 .text 会报错
                         try:
                             content = chunk.text
                         except ValueError:
-                            content = " [⚠️ 安全过滤器拦截] "
+                            content = " [⚠️ 安全拦截] "
                     
                     if content:
                         full_res += content
                         placeholder.markdown(full_res + "▌")
             except Exception as e:
-                placeholder.error(f"❌ 流式传输中断: {e}")
+                placeholder.error(f"❌ 传输中断: {e}")
 
-        # 5. 最终显示与保存
+        # 5. 最终显示
         if not full_res:
-            placeholder.warning("⚠️ AI 未返回任何内容。可能原因：\n1. 图片过多导致处理超时。\n2. 触发了 Google 的安全过滤（K线图容易被误判）。\n建议：减少图片数量分批发送试试。")
+            placeholder.warning("⚠️ AI 无响应，请减少图片或检查网络。")
         else:
             placeholder.markdown(full_res)
 
         st.session_state["messages"].append({"role": "assistant", "content": full_res})
         save_message(user_email, model_choice, "assistant", full_res)
         
-    # 6. 完成后提示
+    # 6. 提示
     if current_images or current_text_context:
         st.toast("✅ 分析完成，建议移除文件以免干扰下次对话。", icon="💡")
-
-
-
