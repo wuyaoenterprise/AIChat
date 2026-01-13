@@ -148,7 +148,17 @@ def clear_history(email):
     supabase.table("chat_history").delete().eq("user_email", email).execute()
     st.session_state["messages"] = []
     st.rerun()
-
+  
+# ==========================================
+# 4.5 初始化消息列表 (新增修复代码)
+# ==========================================
+if "messages" not in st.session_state:
+    # 尝试从数据库加载历史，如果没有则初始化为空列表
+    if st.session_state.get("user_email"):
+        st.session_state["messages"] = load_history(st.session_state["user_email"])
+    else:
+        st.session_state["messages"] = []
+      
 # ==========================================
 # 5. 侧边栏 (控制中心)
 # ==========================================
@@ -318,3 +328,4 @@ if prompt := st.chat_input("输入指令 / 股票代码..."):
     
     if current_images or current_text_context:
         st.toast("✅ 分析完成，建议移除文件以免干扰下次对话。", icon="💡")
+
