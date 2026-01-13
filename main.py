@@ -125,7 +125,7 @@ with st.sidebar:
 
 def get_gemini_response(messages, image=None):
     genai.configure(api_key=GOOGLE_KEY)
-    model = genai.GenerativeModel('gemini-2.0-flash-exp')
+    model = genai.GenerativeModel('gemini-3-flash-preview')
     
     # 构造历史
     gemini_history = []
@@ -170,7 +170,7 @@ def get_chatgpt_response(messages, image=None):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=api_messages,
             stream=True
         )
@@ -241,3 +241,4 @@ if prompt := st.chat_input("输入问题... (如有图片请先在左侧上传)"
     # 对话结束后，提醒用户如果不需要分析下一张图，记得点×
     if user_image:
         st.toast("✅ 图片已分析。如需分析新图片，请先在左侧移除旧图片。", icon="📸")
+
