@@ -303,24 +303,32 @@ if prompt := st.chat_input("输入指令 / 股票代码..."):
     st.session_state["messages"].append({"role": "user", "content": full_prompt_text})
     save_message(user_email, model_choice, "user", display_text)
 
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
-        full_res = ""
-        
-        if model_choice == "gpt-5":
-            stream = get_chatgpt_response(st.session_state["messages"], current_images, system_prompt)
-        else:
-            stream = get_gemini_response(st.session_state["messages"], current_images, system_prompt)
-
-        if isinstance(stream, str):
-            placeholder.error(stream)
-            full_res = stream
-        else:
+   if isinstance(stream, str):
+        placeholder.error(stream)
+        full_res = stream
+    else:
+        try:
             for chunk in stream:
-                content = chunk.choices[0].delta.content if model_choice == "gpt-5" else chunk.text
+                # 兼容 GPT 和 Gemini 的差异
+                if model_choice == "gpt-5":
+                    content = chunk.choices[0].delta.content
+                else:
+                    # Gemini 如果触发安全拦截，访问 .text 会报错，所以要加 try
+                    try:
+                        content = chunk.text
+                    except ValueError:
+                        content = " [⚠️ 安全过滤器拦截] "
+                
                 if content:
                     full_res += content
                     placeholder.markdown(full_res + "▌")
+        except Exception as e:
+            placeholder.error(f"❌ 流式传输中断: {e}")
+
+        # 如果跑完了循环，结果还是空的，说明 AI 彻底没话讲
+        if not full_res:
+            placeholder.warning("⚠️ AI 未返回任何内容。可能原因：\n1. 图片过多导致处理超时。\n2. 触发了 Google 的安全过滤（K线图容易被误判）。\n建议：减少图片数量分批发送试试。")
+        else:
             placeholder.markdown(full_res)
 
     st.session_state["messages"].append({"role": "assistant", "content": full_res})
@@ -328,4 +336,5 @@ if prompt := st.chat_input("输入指令 / 股票代码..."):
     
     if current_images or current_text_context:
         st.toast("✅ 分析完成，建议移除文件以免干扰下次对话。", icon="💡")
+
 
