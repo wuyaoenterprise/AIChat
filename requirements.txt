@@ -1,5 +1,6 @@
 streamlit
 openai
 google-generativeai
-Pillow
 supabase
+Pillow
+streamlit-oauth
