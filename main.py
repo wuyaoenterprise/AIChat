@@ -33,22 +33,33 @@ def init_supabase():
 supabase: Client = init_supabase()
 
 # ==========================================
-# 3. 用户身份识别 (关键逻辑)
+# 3. 用户身份识别 (兼容性修复版)
 # ==========================================
-# Streamlit Cloud 会自动通过 Google Login 提供 user.email
 user_email = None
 
-if st.experimental_user.email:
-    # 线上环境：直接获取登录用户的邮箱
-    user_email = st.experimental_user.email
+# 尝试从 Streamlit Cloud 获取邮箱 (包裹在 try-except 中防止报错)
+try:
+    # 优先尝试新版标准写法
+    if st.user.email:
+        user_email = st.user.email
+    # 备用：尝试旧版写法
+    elif st.experimental_user.email:
+        user_email = st.experimental_user.email
+except:
+    pass # 如果上面都报错，说明在本地或未登录，直接跳过
+
+# 逻辑判断
+if user_email:
+    # 线上环境：成功获取到邮箱
     st.sidebar.success(f"👤 已登录: {user_email}")
 else:
-    # 本地环境：提供一个模拟登录框方便你测试
-    st.sidebar.warning("⚠️ 本地开发模式")
-    user_email = st.sidebar.text_input("请输入测试邮箱 (模拟登录):", "test@example.com")
+    # 本地环境 或 线上未设置 Private 模式
+    st.sidebar.warning("⚠️ 测试模式 (未检测到谷歌登录)")
+    # 提供一个模拟输入框
+    user_email = st.sidebar.text_input("请输入测试邮箱 (模拟身份):", "test@example.com")
 
 if not user_email:
-    st.warning("👈 请先在侧边栏输入邮箱，或登录后开始对话。")
+    st.warning("👈 请先在侧边栏输入邮箱，或确保 App 已设为 Private 并登录。")
     st.stop()
 
 # ==========================================
@@ -196,4 +207,5 @@ if prompt := st.chat_input("说点什么..."):
 
     # 4. 存入云端 (AI)
     st.session_state["messages"].append({"role": "assistant", "content": full_response})
+
     save_message(user_email, model_choice, "assistant", full_response)
