@@ -4,3 +4,4 @@ google-generativeai
 supabase
 Pillow
 streamlit-oauth
+PyPDF2
