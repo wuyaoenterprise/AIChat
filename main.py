@@ -2,19 +2,20 @@ import streamlit as st
 from openai import OpenAI
 import google.generativeai as genai
 from supabase import create_client, Client
-import os
+from PIL import Image
+import io
+import base64
 
 # ==========================================
-# 1. 页面配置与初始化
+# 1. 页面配置
 # ==========================================
-st.set_page_config(page_title="双核心 AI 聚合站 (Cloud)", page_icon="☁️", layout="wide")
+st.set_page_config(page_title="双核心 AI 聚合站 Pro", page_icon="📸", layout="wide")
 
 st.title("🤖 双核心 AI 聚合终端 Pro")
-st.markdown("### ChatGPT (OpenAI) | Gemini (Google) | ☁️ 云端同步版")
-st.markdown("---")
+st.markdown("### ChatGPT (OpenAI) | Gemini (Google) | 📸 视觉分析版")
 
 # ==========================================
-# 2. 安全与数据库连接
+# 2. 安全与连接
 # ==========================================
 try:
     OPENAI_KEY = st.secrets["keys"]["openai_api_key"]
@@ -22,10 +23,9 @@ try:
     SUPABASE_URL = st.secrets["supabase"]["url"]
     SUPABASE_KEY = st.secrets["supabase"]["key"]
 except Exception as e:
-    st.error("❌ 缺少配置！请检查 .streamlit/secrets.toml 是否包含 [keys] 和 [supabase]。")
+    st.error("❌ 缺少配置！请检查 Secrets。")
     st.stop()
 
-# 初始化 Supabase 客户端
 @st.cache_resource
 def init_supabase():
     return create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -33,179 +33,211 @@ def init_supabase():
 supabase: Client = init_supabase()
 
 # ==========================================
-# 3. 用户身份识别 (兼容性修复版)
+# 3. 真正的谷歌登录逻辑
 # ==========================================
 user_email = None
 
-# 尝试从 Streamlit Cloud 获取邮箱 (包裹在 try-except 中防止报错)
 try:
-    # 优先尝试新版标准写法
+    # 只要 App 设为 Private，这里就能自动拿到真实邮箱
     if st.user.email:
         user_email = st.user.email
-    # 备用：尝试旧版写法
     elif st.experimental_user.email:
         user_email = st.experimental_user.email
 except:
-    pass # 如果上面都报错，说明在本地或未登录，直接跳过
+    pass
 
-# 逻辑判断
 if user_email:
-    # 线上环境：成功获取到邮箱
     st.sidebar.success(f"👤 已登录: {user_email}")
 else:
-    # 本地环境 或 线上未设置 Private 模式
-    st.sidebar.warning("⚠️ 测试模式 (未检测到谷歌登录)")
-    # 提供一个模拟输入框
-    user_email = st.sidebar.text_input("请输入测试邮箱 (模拟身份):", "test@example.com")
+    # 如果没开 Private 或者在本地，显示提示
+    st.warning("⚠️ 检测到当前为【访客/测试模式】")
+    st.info("💡 要启用真正的谷歌登录，请在 Streamlit Cloud 设置中将 App 设为 'Private'。")
+    user_email = st.sidebar.text_input("测试邮箱 (本地调试用):", "test@example.com")
 
 if not user_email:
-    st.warning("👈 请先在侧边栏输入邮箱，或确保 App 已设为 Private 并登录。")
     st.stop()
 
 # ==========================================
-# 4. 历史记录管理 (Supabase)
+# 4. 历史记录 (只存文本)
 # ==========================================
-
-def load_history(email, model):
-    """从数据库加载历史记录"""
+def load_history(email):
     try:
         response = supabase.table("chat_history")\
             .select("*")\
             .eq("user_email", email)\
             .order("created_at", desc=False)\
             .execute()
-        # 转换回 Streamlit 需要的格式
         messages = []
         for row in response.data:
             messages.append({"role": row["role"], "content": row["content"]})
         return messages
-    except Exception as e:
-        st.error(f"加载历史失败: {e}")
+    except:
         return []
 
 def save_message(email, model, role, content):
-    """保存单条消息到数据库"""
     try:
+        # 图片数据太大，不存入数据库，只存文本提示
+        if content.startswith("[图片上传]"):
+            save_content = "[用户上传了一张图片进行分析]"
+        else:
+            save_content = content
+            
         supabase.table("chat_history").insert({
             "user_email": email,
             "model_name": model,
             "role": role,
-            "content": content
+            "content": save_content
         }).execute()
     except Exception as e:
-        st.error(f"保存失败: {e}")
+        print(f"Save error: {e}")
 
 def clear_history(email):
-    """清空该用户的云端记录"""
-    try:
-        supabase.table("chat_history").delete().eq("user_email", email).execute()
-        st.session_state["messages"] = []
-        st.rerun()
-    except Exception as e:
-        st.error(f"删除失败: {e}")
+    supabase.table("chat_history").delete().eq("user_email", email).execute()
+    st.session_state["messages"] = []
+    st.rerun()
 
 # ==========================================
-# 5. 模型与逻辑控制
+# 5. 侧边栏与图片上传
 # ==========================================
 with st.sidebar:
     st.markdown("---")
-    model_choice = st.radio(
-        "选择 AI 模型:",
-        ("ChatGPT-5", "Gemini 3 Pro"), # 界面显示的名字
-        index=1
-    )
+    model_choice = st.radio("🧠 选择大脑:", ("ChatGPT-5", "Gemini 3 Pro"), index=1)
     
-    # 状态管理：如果还没加载过或者换了用户/模型，重新加载历史
-    # 这里我们简化逻辑：所有模型共享一个历史，或者你可以选择过滤 'model_name'
-    if "messages" not in st.session_state or st.sidebar.button("🔄 刷新/加载云端记录"):
-        st.session_state["messages"] = load_history(user_email, "shared_history")
+    st.markdown("### 📸 图片分析")
+    uploaded_file = st.file_uploader("上传图片 (支持 JPG/PNG)", type=["jpg", "jpeg", "png"])
     
-    if st.button("🗑️ 清空我的云端记录"):
+    user_image = None
+    if uploaded_file:
+        # 将上传的文件转换为 PIL 图片对象
+        user_image = Image.open(uploaded_file)
+        st.image(user_image, caption="已上传", use_container_width=True)
+
+    st.markdown("---")
+    if "messages" not in st.session_state or st.button("🔄 刷新记录"):
+        st.session_state["messages"] = load_history(user_email)
+    
+    if st.button("🗑️ 清空记录"):
         clear_history(user_email)
 
 # ==========================================
-# 6. AI 响应函数
+# 6. AI 核心逻辑 (带图片处理)
 # ==========================================
 
-def get_chatgpt_response(messages):
-    client = OpenAI(api_key=OPENAI_KEY)
-    try:
-        response = client.chat.completions.create(
-            model="gpt-5", 
-            messages=messages,
-            stream=True 
-        )
-        return response
-    except Exception as e:
-        return f"ChatGPT Error: {str(e)}"
-
-def get_gemini_response(messages):
+def get_gemini_response(messages, image=None):
     genai.configure(api_key=GOOGLE_KEY)
-    model = genai.GenerativeModel('gemini-3-pro-preview') 
+    model = genai.GenerativeModel('gemini-2.0-flash-exp')
     
+    # 构造历史
     gemini_history = []
-    for msg in messages[:-1]: 
+    for msg in messages[:-1]:
         role = "user" if msg["role"] == "user" else "model"
         gemini_history.append({"role": role, "parts": [msg["content"]]})
     
     chat = model.start_chat(history=gemini_history)
     
     try:
-        response = chat.send_message(messages[-1]["content"], stream=True)
+        if image:
+            # 如果有图，发送 [文本, 图片]
+            response = chat.send_message([messages[-1]["content"], image], stream=True)
+        else:
+            response = chat.send_message(messages[-1]["content"], stream=True)
         return response
     except Exception as e:
         return f"Gemini Error: {str(e)}"
 
+def get_chatgpt_response(messages, image=None):
+    client = OpenAI(api_key=OPENAI_KEY)
+    
+    # 准备发送的消息列表
+    api_messages = list(messages)
+    
+    # 如果有图片，需要对最新的一条消息进行改造 (转 Base64)
+    if image:
+        # 1. 图片转 Base64
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        
+        # 2. 替换最后一条消息为“多模态”格式
+        last_content = api_messages[-1]["content"]
+        api_messages[-1] = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": last_content},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_str}"}}
+            ]
+        }
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=api_messages,
+            stream=True
+        )
+        return response
+    except Exception as e:
+        return f"ChatGPT Error: {str(e)}"
+
 # ==========================================
-# 7. 聊天界面
+# 7. 聊天交互区
 # ==========================================
 
-# 显示历史
 for msg in st.session_state["messages"]:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# 处理输入
-if prompt := st.chat_input("说点什么..."):
-    # 1. 显示用户消息
+if prompt := st.chat_input("输入问题... (如有图片请先在左侧上传)"):
+    
+    # 1. 组合显示内容
+    display_content = prompt
+    if user_image:
+        display_content = f"[图片上传] {prompt}"
+        
+    # 2. 显示用户消息
     with st.chat_message("user"):
-        st.markdown(prompt)
-    st.session_state["messages"].append({"role": "user", "content": prompt})
-    # 2. 存入云端 (用户)
-    save_message(user_email, model_choice, "user", prompt)
+        st.markdown(display_content)
+        if user_image:
+            st.image(user_image, width=200)
+            
+    st.session_state["messages"].append({"role": "user", "content": display_content})
+    # 存入数据库
+    save_message(user_email, model_choice, "user", display_content)
 
     # 3. AI 回复
     with st.chat_message("assistant"):
-        response_placeholder = st.empty() 
+        response_placeholder = st.empty()
         full_response = ""
         
+        # 调用 AI (传入图片)
         if model_choice == "ChatGPT-5":
-            stream = get_chatgpt_response(st.session_state["messages"])
-        elif model_choice == "Gemini 3 Pro":
-            stream = get_gemini_response(st.session_state["messages"])
-            
-        # 统一流处理
-        if isinstance(stream, str): # 报错了
-            response_placeholder.error(stream)
-            full_response = stream
-        else:
-            try:
+            stream = get_chatgpt_response(st.session_state["messages"], user_image)
+            # 处理 GPT 流
+            if isinstance(stream, str):
+                response_placeholder.error(stream)
+                full_response = stream
+            else:
                 for chunk in stream:
-                    content = ""
-                    if model_choice == "ChatGPT-5":
-                        if chunk.choices[0].delta.content:
-                            content = chunk.choices[0].delta.content
-                    else: # Gemini
-                         content = chunk.text
-                    
-                    full_response += content
+                    if chunk.choices[0].delta.content:
+                        full_response += chunk.choices[0].delta.content
+                        response_placeholder.markdown(full_response + "▌")
+                response_placeholder.markdown(full_response)
+
+        elif model_choice == "Gemini 3 Pro":
+            stream = get_gemini_response(st.session_state["messages"], user_image)
+            # 处理 Gemini 流
+            if isinstance(stream, str):
+                response_placeholder.error(stream)
+                full_response = stream
+            else:
+                for chunk in stream:
+                    full_response += chunk.text
                     response_placeholder.markdown(full_response + "▌")
                 response_placeholder.markdown(full_response)
-            except Exception as e:
-                response_placeholder.error(f"生成中断: {e}")
-                full_response = str(e)
 
-    # 4. 存入云端 (AI)
+    # 4. 保存 AI 回复
     st.session_state["messages"].append({"role": "assistant", "content": full_response})
-
     save_message(user_email, model_choice, "assistant", full_response)
+    
+    # 对话结束后，提醒用户如果不需要分析下一张图，记得点×
+    if user_image:
+        st.toast("✅ 图片已分析。如需分析新图片，请先在左侧移除旧图片。", icon="📸")
