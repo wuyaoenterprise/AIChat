@@ -279,61 +279,90 @@ def get_chatgpt_response(messages, images=None, system_instruction=None):
 # ==========================================
 # 7. 聊天交互
 # ==========================================
+# 显示历史消息
 for msg in st.session_state["messages"]:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
+# 处理用户输入
 if prompt := st.chat_input("输入指令 / 股票代码..."):
     
     full_prompt_text = prompt
     display_text = prompt
     
+    # 拼接上下文文件
     if current_text_context:
         full_prompt_text += f"\n\n【参考文件内容】:{current_text_context}"
         display_text += " [📄 附带了文件资料]"
     if current_images:
         display_text = f"[🖼️ {len(current_images)} 张图片] {display_text}"
 
+    # 确定系统提示词
     system_prompt = STOCK_ANALYST_PROMPT if mode_choice == "📈 华尔街量化交易员" else None
 
+    # 1. 显示用户消息
     with st.chat_message("user"):
         st.markdown(display_text)
-        if current_images: st.image(current_images[:4], width=150) # 这里也去掉了caption
+        if current_images: 
+            st.image(current_images[:4], width=150)
             
+    # 2. 保存用户消息到历史
     st.session_state["messages"].append({"role": "user", "content": full_prompt_text})
     save_message(user_email, model_choice, "user", display_text)
 
-   if isinstance(stream, str):
-        placeholder.error(stream)
-        full_res = stream
-    else:
-        try:
-            for chunk in stream:
-                # 兼容 GPT 和 Gemini 的差异
-                if model_choice == "gpt-5":
-                    content = chunk.choices[0].delta.content
-                else:
-                    # Gemini 如果触发安全拦截，访问 .text 会报错，所以要加 try
-                    try:
-                        content = chunk.text
-                    except ValueError:
-                        content = " [⚠️ 安全过滤器拦截] "
-                
-                if content:
-                    full_res += content
-                    placeholder.markdown(full_res + "▌")
-        except Exception as e:
-            placeholder.error(f"❌ 流式传输中断: {e}")
+    # 3. 生成 AI 回复 (这里是你之前漏掉的核心部分！)
+    with st.chat_message("assistant"):
+        placeholder = st.empty() # 创建占位符
+        full_res = ""
+        
+        # 调用 AI 接口获取流式响应
+        if model_choice == "gpt-5":
+            stream = get_chatgpt_response(
+                st.session_state["messages"], 
+                images=current_images, 
+                system_instruction=system_prompt
+            )
+        else:
+            stream = get_gemini_response(
+                st.session_state["messages"], 
+                images=current_images, 
+                system_instruction=system_prompt
+            )
 
-        # 如果跑完了循环，结果还是空的，说明 AI 彻底没话讲
+        # 4. 处理流式输出
+        if isinstance(stream, str):
+            # 如果 stream 是字符串，说明出错了（返回了错误信息）
+            placeholder.error(stream)
+            full_res = stream
+        else:
+            try:
+                for chunk in stream:
+                    # 兼容 GPT 和 Gemini 的差异
+                    if model_choice == "gpt-5":
+                        content = chunk.choices[0].delta.content
+                    else:
+                        # Gemini 如果触发安全拦截，访问 .text 会报错
+                        try:
+                            content = chunk.text
+                        except ValueError:
+                            content = " [⚠️ 安全过滤器拦截] "
+                    
+                    if content:
+                        full_res += content
+                        placeholder.markdown(full_res + "▌")
+            except Exception as e:
+                placeholder.error(f"❌ 流式传输中断: {e}")
+
+        # 5. 最终显示与保存
         if not full_res:
             placeholder.warning("⚠️ AI 未返回任何内容。可能原因：\n1. 图片过多导致处理超时。\n2. 触发了 Google 的安全过滤（K线图容易被误判）。\n建议：减少图片数量分批发送试试。")
         else:
             placeholder.markdown(full_res)
 
-    st.session_state["messages"].append({"role": "assistant", "content": full_res})
-    save_message(user_email, model_choice, "assistant", full_res)
-    
+        st.session_state["messages"].append({"role": "assistant", "content": full_res})
+        save_message(user_email, model_choice, "assistant", full_res)
+        
+    # 6. 完成后提示
     if current_images or current_text_context:
         st.toast("✅ 分析完成，建议移除文件以免干扰下次对话。", icon="💡")
 
