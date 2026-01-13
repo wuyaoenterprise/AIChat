@@ -7,7 +7,7 @@ import io
 import base64
 import time
 import json
-from streamlit_oauth import OAuth2Componentit
+from streamlit_oauth import OAuth2Component
 
 # ==========================================
 # 1. 页面配置
@@ -273,3 +273,4 @@ if prompt := st.chat_input("输入问题... (如有图片请先在左侧上传)"
     
     if user_image:
         st.toast("✅ 图片已分析。如需分析新图片，请先在左侧移除旧图片。", icon="📸")
+
