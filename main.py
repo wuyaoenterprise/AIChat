@@ -259,20 +259,30 @@ def get_chatgpt_response(messages, images=None, system_instruction=None):
     client = OpenAI(api_key=OPENAI_KEY)
     api_messages = list(messages)
     
+    # 注入 System Instruction
     if system_instruction:
         api_messages.insert(0, {"role": "system", "content": system_instruction})
 
+    # 处理图片
     if images:
         last_msg = api_messages[-1]
         content_list = [{"type": "text", "text": last_msg["content"]}]
+        
         for img in images:
+            # 👇【核心修复】处理透明通道问题
+            # 如果图片是 RGBA (带透明) 或 P 模式，强制转为 RGB (白色背景)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+                
             buffered = io.BytesIO()
             img.save(buffered, format="JPEG", quality=85)
             img_str = base64.b64encode(buffered.getvalue()).decode()
             content_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}})
+            
         api_messages[-1] = {"role": "user", "content": content_list}
 
     try:
+        # 注意：这里模型名称如果你没有 gpt-5 权限，建议改为 gpt-4o
         return client.chat.completions.create(model="gpt-5", messages=api_messages, stream=True)
     except Exception as e: return f"GPT Error: {e}"
 
@@ -365,5 +375,6 @@ if prompt := st.chat_input("输入指令 / 股票代码..."):
     # 6. 完成后提示
     if current_images or current_text_context:
         st.toast("✅ 分析完成，建议移除文件以免干扰下次对话。", icon="💡")
+
 
 
