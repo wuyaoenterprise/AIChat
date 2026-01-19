@@ -9,11 +9,12 @@ import time
 import json
 from streamlit_oauth import OAuth2Component
 import PyPDF2
-# 👇【新增】引入 yfinance 用于抓取实时数据
 import yfinance as yf
+# 👇【新增】引入免费搜索库
+from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. 内置核心提示词 (Persona) - 已升级为"深度详细版"
+# 0. 内置核心提示词 (Persona)
 # ==========================================
 STOCK_ANALYST_PROMPT = """
 # Role: 华尔街资深量化宏观交易员 (Senior Quant-Macro Trader)
@@ -99,6 +100,24 @@ def get_stock_info(symbol):
         return f"尝试抓取 {symbol} 数据时发生错误: {str(e)}"
 
 # ==========================================
+# 0.6 工具函数：通用网页搜索 (给 GPT 用)
+# ==========================================
+def get_web_search_results(query):
+    """使用 DuckDuckGo 搜索实时信息"""
+    try:
+        # 限制搜索结果为 5 条，保证速度
+        results = DDGS().text(query, max_results=5)
+        if not results:
+            return "【搜索结果】未找到相关实时信息。"
+        
+        search_context = "【🔍 实时互联网搜索结果 (供参考)】:\n"
+        for i, res in enumerate(results):
+            search_context += f"{i+1}. 标题: {res['title']}\n   摘要: {res['body']}\n   链接: {res['href']}\n\n"
+        return search_context
+    except Exception as e:
+        return f"【搜索错误】无法连接互联网: {str(e)}"
+
+# ==========================================
 # 1. 页面配置
 # ==========================================
 st.set_page_config(page_title="双核心 AI 聚合站 Pro", page_icon="📈", layout="wide")
@@ -169,7 +188,7 @@ def clear_history(email):
     supabase.table("chat_history").delete().eq("user_email", email).execute()
     st.session_state["messages"] = []
     st.rerun()
-  
+
 # ==========================================
 # 4.5 初始化消息列表
 # ==========================================
@@ -190,6 +209,7 @@ with st.sidebar:
         
     st.markdown("---")
     st.markdown("### 🧠 大脑与模式")
+    # 注意：Gemini 联网推荐使用 1.5-flash 或 2.0-flash-exp
     model_choice = st.radio("选择模型:", ("gpt-5", "gemini-3-flash-preview"), index=1)
     
     # 模式切换
@@ -200,15 +220,16 @@ with st.sidebar:
     
     if mode_choice == "📈 华尔街量化交易员":
         st.caption("✅ 交易员模式已激活")
+        
+    # 👇【新增】联网开关
+    enable_web = st.toggle("🌍 开启实时联网 (Web Search)", value=True)
     
     st.markdown("---")
-    # 👇【新增】侧边栏手动抓取工具
+    # 侧边栏手动抓取工具
     st.markdown("### 📡 快速行情抓取")
     manual_ticker = st.text_input("输入代码 (如 TSLA):", key="sidebar_ticker").upper()
     if manual_ticker and st.button("🔍 抓取数据并分析"):
-        # 将数据抓取指令直接注入到聊天框
         st.session_state["auto_prompt"] = manual_ticker
-        # 注意：这里不直接 reruen，而是通过 session_state 传递给主逻辑
     
     st.markdown("---")
     st.markdown("### 📂 超级文件上传")
@@ -260,12 +281,19 @@ with st.sidebar:
 # ==========================================
 def get_gemini_response(messages, images=None, system_instruction=None):
     genai.configure(api_key=GOOGLE_KEY)
-    model = genai.GenerativeModel('gemini-3-flash-preview') 
     
+    # 👇【核心修改】开启官方 Google Search Grounding
+    # 使用 gemini-3-flash-preview 以确保兼容性和稳定性
+    try:
+        model = genai.GenerativeModel('gemini-3-flash-preview', tools='google_search_retrieval') 
+    except:
+        # 降级处理：如果账号不支持搜索，回退到普通模式
+        model = genai.GenerativeModel('gemini-3-flash-preview')
+
     gemini_history = []
     if system_instruction:
          gemini_history.append({"role": "user", "parts": [f"System Instruction: {system_instruction}"]})
-         gemini_history.append({"role": "model", "parts": ["Understood. I will provide detailed, expert analysis."]})
+         gemini_history.append({"role": "model", "parts": ["Understood. I will provide detailed, expert analysis using latest data."]})
 
     for msg in messages[:-1]:
         role = "user" if msg["role"] == "user" else "model"
@@ -317,9 +345,7 @@ for msg in st.session_state["messages"]:
 # 检查是否有来自侧边栏的自动输入
 if "auto_prompt" in st.session_state and st.session_state["auto_prompt"]:
     user_input = st.session_state["auto_prompt"]
-    # 清空状态防止循环
     del st.session_state["auto_prompt"]
-    # 模拟用户提交
     prompt = user_input
 else:
     prompt = st.chat_input("输入指令 / 股票代码 (如 NVDA)...")
@@ -328,10 +354,8 @@ if prompt:
     full_prompt_text = prompt
     display_text = prompt
     
-    # 👇【新增】智能识别股票代码并抓取数据
-    # 如果输入比较短且是纯字母，大概率是股票代码
+    # 智能识别股票代码
     potential_ticker = prompt.strip().upper()
-    # 简单的判断逻辑：长度小于6且全是字母，或者包含 . (如 HK 股)
     is_ticker = (len(potential_ticker) <= 6 and potential_ticker.isalpha()) or ("." in potential_ticker and len(potential_ticker) <= 10)
     
     if is_ticker:
@@ -340,6 +364,14 @@ if prompt:
             full_prompt_text += f"\n\n【系统自动抓取的实时行情】:\n{stock_data}"
             display_text += f" [📡 已自动挂载 {potential_ticker} 实时数据]"
             status.update(label="✅ 数据抓取完成", state="complete", expanded=False)
+            
+    # 👇【新增】如果是普通对话 + 开启联网 + 且不是纯股票查询（股票查询用yfinance更准）
+    # 主要针对 GPT 模型，因为 Gemini 已经内置联网
+    elif enable_web and model_choice == "gpt-5":
+        with st.status(f"🌍 正在搜索全网资料: {prompt[:10]}...", expanded=True) as status:
+            web_data = get_web_search_results(prompt)
+            full_prompt_text += f"\n\n{web_data}"
+            status.update(label="✅ 搜索完成", state="complete", expanded=False)
 
     # 拼接文件上下文
     if current_text_context:
