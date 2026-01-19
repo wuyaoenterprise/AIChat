@@ -6,3 +6,4 @@ Pillow
 streamlit-oauth
 PyPDF2
 yfinance
+duckduckgo-search
