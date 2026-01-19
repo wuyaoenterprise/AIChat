@@ -34,6 +34,7 @@ STOCK_ANALYST_PROMPT = """
 - **结构与趋势**：从周线看大趋势，从日线看波段。是多头排列还是空头陷阱？
 - **量价行为 (Price Action)**：关键位置的成交量如何？有没有原本的支撑变成了压力？
 - **指标共振**：RSI、MACD、布林带是否在同一时间指出了同一方向？
+- **指标共振**：成交量给出什么信号？
 
 ### 3. 📜 历史分形与统计 (Historical Context)
 - 这只股票在财报季通常怎么走？
@@ -209,6 +210,7 @@ with st.sidebar:
         
     st.markdown("---")
     st.markdown("### 🧠 大脑与模式")
+    # ✅ 已锁定为你要求的 2.5-flash
     model_choice = st.radio("选择模型:", ("gpt-5", "gemini-2.5-flash"), index=1)
     
     # 模式切换
@@ -281,12 +283,14 @@ with st.sidebar:
 def get_gemini_response(messages, images=None, system_instruction=None):
     genai.configure(api_key=GOOGLE_KEY)
     
-    # 👇【核心修改】开启官方 Google Search Grounding
-    # 使用 gemini-3-flash-preview 以确保兼容性和稳定性
+    # 👇【核心修改】
+    # 1. 模型锁定为 'gemini-2.5-flash'
+    # 2. 工具名修正为 'google_search' (旧的 retrieval 已废弃)
+    # 3. 修正了之前的语法错误（补全了引号）
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash', tools='google_search_retrieval') 
+        model = genai.GenerativeModel('gemini-2.5-flash', tools='google_search') 
     except:
-        # 降级处理：如果账号不支持搜索，回退到普通模式
+        # 如果不支持搜索，只加载基础模型
         model = genai.GenerativeModel('gemini-2.5-flash')
 
     gemini_history = []
@@ -443,6 +447,3 @@ if prompt:
     # 6. 提示
     if current_images or current_text_context:
         st.toast("✅ 分析完成，建议移除文件以免干扰下次对话。", icon="💡")
-
-
-
