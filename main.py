@@ -284,7 +284,7 @@ def get_gemini_response(messages, images=None, system_instruction=None):
     # 👇【核心修改】开启官方 Google Search Grounding
     # 使用 gemini-3-flash-preview 以确保兼容性和稳定性
     try:
-        model = genai.GenerativeModel('gemini-2.5-pro, tools='google_search_retrieval') 
+        model = genai.GenerativeModel('gemini-2.5-pro', tools='google_search_retrieval') 
     except:
         # 降级处理：如果账号不支持搜索，回退到普通模式
         model = genai.GenerativeModel('gemini-2.5-pro')
@@ -443,4 +443,5 @@ if prompt:
     # 6. 提示
     if current_images or current_text_context:
         st.toast("✅ 分析完成，建议移除文件以免干扰下次对话。", icon="💡")
+
 
